@@ -1,0 +1,215 @@
+---
+title: "Course Work 2"
+author: "Hamdha, Hemara, Lakshika"
+date: "2026-03-05"
+output: html_document
+---
+
+United States Advance Retail Sales: Retail Trade
+```{r}
+library(ggplot2)
+library(forecast)
+library(tseries)
+```
+1.DATA PREPARATION AND VISUALIZATION
+```{r}
+sales_data <- read.csv("C:/Users/hamdh/Downloads/RSXFSN.csv")
+head(sales_data)
+```
+
+```{r}
+# Convert Data Column
+sales_data$observation_date <- as.Date(sales_data$observation_date)
+# Change the data type to Time series(ts)
+retails_ts <- ts(sales_data$RSXFSN, c(2010,12), frequency = 12)
+class(retails_ts)
+```
+
+```{r}
+#library(ggplot2)
+
+# Plot Raw data(Sales_data)
+plot(retails_ts, col = "blue", lwd = 2, 
+     main = "U.S. Monthly Retail Sales (2010-2025)", 
+     ylab = "Sales (Millions of $)", xlab = "Year")
+
+```
+
+```{r}
+# Seasonal Decomposition
+decomp <- decompose(retails_ts)
+plot(decomp)
+```
+
+```{r}
+# Log Transformation (To stabilize the Variance)
+log_retails_ts<- log(retails_ts)
+```
+
+```{r}
+adf.test(log_retails_ts)
+```
+
+2.STATIONARY AND DIFFERENCING
+```{r}
+#library(forecast)
+
+
+# Seasonal Differencing (D=1) to remove seasonal patterns
+diff1_12 <- diff(log_retails_ts, lag = 12)
+plot(diff1_12, main="Seasonally Differenced Log Data")
+
+```
+
+```{r}
+#  First Differencing (d=1) to remove remaining trend
+stationary_ts <- diff(diff1_12, lag = 1)
+plot(stationary_ts,main="Fully Differenced stationary Data")
+```
+
+```{r}
+# library(tseries)
+#  Check stationarity (Looking for p-value < 0.05) to confirm stationary
+adf.test(stationary_ts)
+```
+
+
+```{r}
+# Check ACF/PACF (Model Identification)
+
+par(mfrow=c(1,1))
+acf(stationary_ts, main="ACF (Identification)")
+# seasonal spike at Lag 12 this confirms that even after differencing, there is a strong seasonal relationship.It justifies why the (auto.arima) chose a Seasonal Moving Average (SMA) component.
+```
+
+```{r}
+pacf(stationary_ts, main="PACF (Identification)")
+par(mfrow=c(1,1))
+# Early significant PACF spikes indicate the presence of non-seasonal AR terms
+# This helps identify the AR component of the SARIMA model
+   
+```
+
+```{r}
+end(retails_ts)
+```
+
+
+3.MODEL VALIDATION
+```{r}
+# Data Split & Validation(MAPE)
+# Split: Train(2020-2024) and Test(2025)
+train_data <- window(log_retails_ts, end = c(2024, 12))
+test_data  <- window(log_retails_ts, start = c(2025, 1))
+
+# Fit model on Training set
+fit_val <- auto.arima(train_data, seasonal = TRUE, 
+                      stepwise = FALSE, approximation = FALSE)
+
+# Forecast the test period (12 months)
+forecast_val <- forecast(fit_val, h = 12)
+
+# Calculate MAPE on Original Scale (Back-transform with exp)
+actual_test_original <- exp(as.numeric(test_data))
+predicted_test_original <- exp(as.numeric(forecast_val$mean))
+
+mape_val <- mean(abs((actual_test_original - predicted_test_original) / actual_test_original)) * 100
+cat("\nValidation MAPE (Original Scale):", round(mape_val, 2), "%\n")
+
+
+```
+
+
+```{r}
+# Validation Plot :Red line (Actual) should follow the Blue line (Predicted)
+# This creates the blue forecast line and the gray confidence intervals
+plot(forecast_val, 
+     main="Model Validation: Actual vs Predicted (2025)", 
+     xlab="Year", 
+     ylab="Log Retail Sales",
+     lwd=1)
+
+# 2. Add the ACTUAL test data (The red line)
+# Note: Since your forecast is on log scale, test_data must also be log
+lines(test_data, col="red", lwd=2)
+
+# 3. Add the legend to explain the colors
+legend("topleft", 
+       legend=c("Forecasted (Train)", "Actual (Test)"), 
+       col=c("blue", "red"), 
+       lty=1, 
+       lwd=2)
+```
+4. FINAL MODELING AND FORECASTING
+```{r}
+# Model Fitting
+# Using auto.arima to find the best SARIMA (p,d,q)(P,D,Q) model
+fit_sarima <- auto.arima(log_retails_ts, seasonal = TRUE, 
+                         stepwise = FALSE, approximation = FALSE)
+
+# Summary of the fitted model
+summary(fit_sarima)
+```
+The auto.arima function identified the optimal model as SARIMA(1,0,2)(0,1,1)[12] with drift. The high AR1 coefficient (0.9692) indicates a strong month-to-month dependency, while the significant seasonal moving average term (SMA1 = -0.8255) confirms the presence of consistent yearly patterns. The drift term of 0.0037 accounts for the overall growth trend in the U.S. retail sector. With a remarkably low Training MAPE of 0.14% and a highly negative AIC, the model demonstrates a superior fit, making it a reliable tool for future forecasting.
+
+
+```{r}
+#Residual Diagnostic Analysis (checking white noise)
+residuals <- residuals(fit_sarima)
+
+# Perform the Ljung-Box test on the residuals(p-value>0.05)
+ljung_box_test<- Box.test(residuals(fit_sarima), lag = 24, type = "Ljung-Box")
+ljung_box_test
+```
+this is significantly greater than the 0.05 threshold, we fail to reject the null hypothesis. This statistically proves that our residuals are independent and behave like White Noise.
+
+```{r}
+# 2. Advanced Normality Diagnostics (Histogram and Q-Q Plot)
+# These prove that your model residuals are "White Noise"
+par(mfrow = c(1, 2)) # Put plots side-by-side
+# Histogram of Residuals
+hist(residuals, breaks = 20, main = "Histogram of Residuals", 
+     col = "lightblue", border = "black", xlab = "Residuals")
+# Q-Q Plot
+qqnorm(residuals, main = "Normal Q-Q Plot")
+qqline(residuals, col = "red", lwd = 2)
+par(mfrow = c(1, 1)) # Reset plot layout
+```
+
+```{r}
+# 4. FINAL FORECASTING
+
+# 1. Generate the 24-month forecast
+forecast_result <- forecast(fit_sarima, h = 24)
+
+# 2. Plot the Forecast in Original Scale
+# We use exp() on the entire forecast object to keep the time-axis (Years)
+plot(exp(forecast_result$mean), 
+     type="l", 
+     col="blue", 
+     lwd=2, 
+     main="24-Month Forecast of Retail Sales (Original Scale)", 
+     ylab="Retail Sales (Million USD)", 
+     xlab="Year")
+
+# 3. Create the Business-Ready Table (Back-transformed to USD)
+forecast_df <- as.data.frame(forecast_result)
+
+# Note on Indexing: 
+# Column 1 = Point Forecast
+# Column 2 = Lo 80 | Column 3 = Hi 80
+# Column 4 = Lo 95 | Column 5 = Hi 95
+final_report_table <- data.frame(
+  Month           = rownames(forecast_df),
+  Predicted_Sales = round(exp(forecast_df[, 1]), 2), # Point Forecast
+  Lower_Limit_95  = round(exp(forecast_df[, 4]), 2), # Corrected: Lo 95
+  Upper_Limit_95  = round(exp(forecast_df[, 5]), 2)  # Corrected: Hi 95
+)
+
+# 4. View the final results
+print(final_report_table)
+```
+
+
+
+
